@@ -109,7 +109,7 @@ def load_network_from_file():
 
     # prepare encoder
     encoder = Encoder().to(device)
-    print("encode is ", encoder)
+    #print("encode is ", encoder)
     encoder = torch.nn.DataParallel(encoder, device_ids=gpus)
     state_dict = torch.load( names[1] )
     encoder.load_state_dict(state_dict)
@@ -161,7 +161,7 @@ def log_loss(output_csv_file, eg_loss_dict,epoch):
                                                     "c_pred_loss", "bg_rf_loss", "bg_class_loss",
                                                     "child_rf_loss", "fool_BD_loss", "EG_loss",
                                                     "d0_loss", "d2_loss", "bd_loss", "epoch", "data_number"])
-        if(epoch == 1):
+        if(epoch == 0):
             writer.writeheader()
         
         writer.writerow(eg_loss_dict)
@@ -391,7 +391,7 @@ class Trainer(object):
     def train(self):
 
         # prepare net, optimizer and loss
-        self.netG, self.netsD, self.BD, self.encoder = load_network_from_file()   
+        self.netG, self.netsD, self.BD, self.encoder = load_network_from_file()
         self.optimizersD, self.optimizerBD, self.optimizerGE = define_optimizers( self.netG, self.netsD, self.BD, self.encoder )
         self.RF_loss_un = nn.BCELoss(reduction='none')
         self.RF_loss = nn.BCELoss()   
@@ -439,7 +439,8 @@ class Trainer(object):
 
                     log_loss(self.output_csv_file, eg_loss_dict, epoch)
                     
-
+                if( count_data == max_counter % 25 == 0 ):
+                  print("end data number" ,count_data)
                 count_data +=1
 
             # Save model&image for each epoch  
@@ -450,19 +451,18 @@ class Trainer(object):
             with torch.no_grad():   
                 self.code_z, self.code_b, self.code_p, self.code_c = self.encoder( self.fixed_image,'softmax')   
                 self.fake_imgs, self.fg_imgs, self.mk_imgs, self.fg_mk = self.netG(self.code_z, self.code_c, self.code_p, self.code_b, 'code')  
-                save_img_results(None, (self.fake_imgs+self.fg_imgs+self.mk_imgs+self.fg_mk), epoch, self.image_dir)            
+                save_img_results(None, (self.fake_imgs+self.fg_imgs+self.mk_imgs+self.fg_mk), 0, self.image_dir)
             self.encoder.train() 
             self.netG.train()            
         
 
             backup_para = copy_G_params(self.netG)   
             load_params(self.netG, avg_param_G)
-            save_model( self.encoder, self.netG, self.netsD[0], self.netsD[1], self.netsD[2], self.BD, epoch, self.model_dir )   
-            save_opt(  self.optimizerGE,  self.optimizersD[0], self.optimizersD[2], self.optimizerBD,  epoch, self.opt_dir )   
+            save_model( self.encoder, self.netG, self.netsD[0], self.netsD[1], self.netsD[2], self.BD, 0, self.model_dir )
+            save_opt(  self.optimizerGE,  self.optimizersD[0], self.optimizersD[2], self.optimizerBD,  0, self.opt_dir )
             load_params(self.netG, backup_para)        
 
             print( str(epoch)+'th epoch finished' )
-
 
 
 if __name__ == "__main__":
