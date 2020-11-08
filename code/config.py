@@ -17,6 +17,9 @@ __C.DATA_DIR = '../data/fish'
 __C.GPU_ID = '0'
 #__C.CUDA = True
 
+#use trained models
+__C.USE_MODELS = True
+__C.MODELS_DIR = './model2train'
 
 __C.TREE = edict()
 __C.TREE.BRANCH_NUM = 3

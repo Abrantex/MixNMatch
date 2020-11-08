@@ -13,6 +13,7 @@ import random
 from utils import *
 from itertools import chain
 from copy import deepcopy
+import csv
 cudnn.benchmark = True
 device = torch.device("cuda:" + cfg.GPU_ID)
 
@@ -93,7 +94,48 @@ def load_network():
         netsD[i].to(device)
 
     return netG, netsD, BD, encoder
-  
+
+def load_network_from_file():
+    #"load pretrained generator and encoder"
+
+    names = [ os.path.join(cfg.MODELS_DIR,'G.pth'), os.path.join(cfg.MODELS_DIR,'E.pth')  ]
+    gpus = [int(ix) for ix in cfg.GPU_ID.split(',')]
+    
+    # prepare G net     
+    netG = G_NET().to(device)  #?
+    netG = torch.nn.DataParallel(netG, device_ids=gpus)
+    state_dict = torch.load( names[0]  )
+    netG.load_state_dict(state_dict)
+
+    # prepare encoder
+    encoder = Encoder().to(device)
+    print("encode is ", encoder)
+    encoder = torch.nn.DataParallel(encoder, device_ids=gpus)
+    state_dict = torch.load( names[1] )
+    encoder.load_state_dict(state_dict)
+    
+    other_names = [ os.path.join(cfg.MODELS_DIR,'D0.pth'), os.path.join(cfg.MODELS_DIR,'D1.pth'),
+                    os.path.join(cfg.MODELS_DIR,'D2.pth'), os.path.join(cfg.MODELS_DIR,'BD.pth')  ]
+
+    netsD = [ BACKGROUND_D(), PARENT_D(), CHILD_D() ]
+    for i in range(len(netsD)):
+        #netsD[i].apply(weights_init)
+        netsD[i] = torch.nn.DataParallel(netsD[i], device_ids=gpus)
+        state_dict = torch.load( other_names[i]  )
+        netsD[i].load_state_dict(state_dict)       
+
+    BD = Bi_Dis()
+    BD = torch.nn.DataParallel(BD, device_ids=gpus)
+    state_dict = torch.load( other_names[3]  )
+    BD.load_state_dict(state_dict)      
+ 
+    BD.to(device)
+    for i in range(3):
+        netsD[i].to(device)
+
+
+    #return netG.eval(), encoder.eval()
+    return netG, netsD, BD, encoder
 
 
 def save_model( encoder, myG, D0, D1, D2, BD, epoch, model_dir):
@@ -113,6 +155,16 @@ def save_opt( optimizerGE,  optimizerD0,  optimizerD2, optimizerBD, epoch, opt_d
     torch.save(optimizerBD.state_dict(), '%s/BD_%d.pth' % (opt_dir, epoch))
 
     
+def log_loss(output_csv_file, eg_loss_dict,epoch):
+    with open(output_csv_file, 'a') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=["z_pred_loss", "b_pred_loss", "p_pred_loss",
+                                                    "c_pred_loss", "bg_rf_loss", "bg_class_loss",
+                                                    "child_rf_loss", "fool_BD_loss", "EG_loss",
+                                                    "d0_loss", "d2_loss", "bd_loss", "epoch", "data_number"])
+        if(epoch == 1):
+            writer.writeheader()
+        
+        writer.writerow(eg_loss_dict)
 
 ############################### Trainer ############################
 
@@ -127,6 +179,7 @@ class Trainer(object):
         os.makedirs(self.image_dir)
         self.opt_dir = os.path.join(output_dir , 'Opt')
         os.makedirs(self.opt_dir)
+        self.output_csv_file = os.path.join(output_dir , 'losses.csv')
 
         # make dataloader and code buffer 
         self.dataloader = get_dataloader()
@@ -260,6 +313,7 @@ class Trainer(object):
 
         D_loss.backward()
         optD.step()
+        return D_loss.item()
 
 
 
@@ -278,6 +332,7 @@ class Trainer(object):
         D_loss =  -( pred_enc_z.mean()+pred_enc_b.mean()+pred_enc_p.mean()+pred_enc_c.mean()  ) + ( pred_gen_z.mean()+pred_gen_b.mean()+pred_gen_p.mean()+pred_gen_c.mean() ) + penalty*10
         D_loss.backward()
         self.optimizerBD.step()
+        return D_loss.item()
       
 
 
@@ -319,6 +374,15 @@ class Trainer(object):
         EG_loss =  (p_code_loss+c_code_loss) + (bg_rf_loss+bg_class_loss) + child_rf_loss + fool_BD_loss + (5*z_pred_loss+5*b_pred_loss+10*p_pred_loss+10*c_pred_loss)
         EG_loss.backward()
 
+        #print("EG LOSS", EG_loss)
+
+
+        tmp_dict = {"z_pred_loss" : z_pred_loss.item(), "b_pred_loss" : b_pred_loss.item(), "p_pred_loss": p_pred_loss.item(),
+                    "c_pred_loss": c_pred_loss.item(), "bg_rf_loss": bg_rf_loss.item(), "bg_class_loss": bg_class_loss.item(),
+                    "child_rf_loss": child_rf_loss.item(), "fool_BD_loss": fool_BD_loss.item(), "EG_loss": EG_loss.item()}
+
+        return tmp_dict
+
         self.optimizerGE.step()
 
 
@@ -327,7 +391,7 @@ class Trainer(object):
     def train(self):
 
         # prepare net, optimizer and loss
-        self.netG, self.netsD, self.BD, self.encoder = load_network()   
+        self.netG, self.netsD, self.BD, self.encoder = load_network_from_file()   
         self.optimizersD, self.optimizerBD, self.optimizerGE = define_optimizers( self.netG, self.netsD, self.BD, self.encoder )
         self.RF_loss_un = nn.BCELoss(reduction='none')
         self.RF_loss = nn.BCELoss()   
@@ -339,10 +403,13 @@ class Trainer(object):
         # get init avg_G (the param in avg_G is what we want)
         avg_param_G = copy_G_params(self.netG) 
 
+        max_counter = len(self.dataloader)
         for epoch in range(cfg.TRAIN.FIRST_MAX_EPOCH):              
 
+            print("start epoch ",str(epoch))
+            #if torch.cuda.is_available():
+            count_data = 1
             for data in self.dataloader:  
-                     
                 # prepare data              
                 self.real_img126, self.real_img, self.real_z, self.real_b, self.real_p, self.real_c, self.warped_bbox = self.prepare_data(data)
 
@@ -351,22 +418,33 @@ class Trainer(object):
                 self.fake_imgs, self.fg_imgs, self.mk_imgs, self.fg_mk = self.netG( self.real_z, self.real_c, self.real_p, self.real_b, 'code'  )
                                 
                 # Update Discriminator networks in FineGAN      
-                self.train_Dnet(0)
-                self.train_Dnet(2)
+                d0_loss = self.train_Dnet(0)
+                d2_loss = self.train_Dnet(2)
 
                 # Update Bi Discriminator
-                self.train_BD()
+                bd_loss = self.train_BD()
 
                 # Update Encoder and G network
-                self.train_EG()
+                eg_loss_dict = self.train_EG()
                 for avg_p, p in zip( avg_param_G, self.netG.parameters() ):
                     avg_p.mul_(0.999).add_(0.001, p.data)
+                
+                if( count_data == max_counter ):    
+                    print("end data number" ,count_data)
+                    eg_loss_dict["d0_loss"] = d0_loss
+                    eg_loss_dict["d2_loss"] = d2_loss
+                    eg_loss_dict["bd_loss"] = bd_loss
+                    eg_loss_dict["epoch"] = epoch
+                    eg_loss_dict["data_number"] = count_data
 
-        
+                    log_loss(self.output_csv_file, eg_loss_dict, epoch)
+                    
+
+                count_data +=1
+
             # Save model&image for each epoch  
             backup_para = copy_G_params(self.netG)   
             load_params(self.netG, avg_param_G)
-
             self.encoder.eval()   
             self.netG.eval()    
             with torch.no_grad():   
@@ -376,22 +454,14 @@ class Trainer(object):
             self.encoder.train() 
             self.netG.train()            
         
-        
 
             backup_para = copy_G_params(self.netG)   
             load_params(self.netG, avg_param_G)
-            save_model( self.encoder, self.netG, self.netsD[0], self.netsD[1], self.netsD[2], self.BD, 0, self.model_dir )   
-            save_opt(  self.optimizerGE,  self.optimizersD[0], self.optimizersD[2], self.optimizerBD,  0, self.opt_dir )   
+            save_model( self.encoder, self.netG, self.netsD[0], self.netsD[1], self.netsD[2], self.BD, epoch, self.model_dir )   
+            save_opt(  self.optimizerGE,  self.optimizersD[0], self.optimizersD[2], self.optimizerBD,  epoch, self.opt_dir )   
             load_params(self.netG, backup_para)        
 
             print( str(epoch)+'th epoch finished' )
-
-
-
-
-
-
-
 
 
 
@@ -418,5 +488,3 @@ if __name__ == "__main__":
     trainer = Trainer(output_dir)   
     print('start training now')
     trainer.train()
-      
-        

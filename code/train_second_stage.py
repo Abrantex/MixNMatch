@@ -13,6 +13,7 @@ cudnn.benchmark = True
 device = torch.device("cuda:" + cfg.GPU_ID)
 
 
+import csv
 
 
 
@@ -45,10 +46,14 @@ def load_network():
     extractor = FeatureExtractor(3,16) 
     extractor.apply(weights_init)
     extractor = torch.nn.DataParallel(extractor , device_ids=gpus)
+    if( cfg.USE_MODELS ):
+        extractor.load_state_dict(torch.load(  cfg.MODELS_DIR + '/EX.pth' ))
 
     dis_dis = Dis_Dis(16)
     dis_dis.apply(weights_init)
     dis_dis = torch.nn.DataParallel(dis_dis , device_ids=gpus)
+    if( cfg.USE_MODELS ):
+        dis_dis.load_state_dict(torch.load(  cfg.MODELS_DIR +"/DD.pth" ))
 
     netG.to(device)  
     encoder.to(device)  
@@ -61,7 +66,16 @@ def load_network():
 
 def save_model(  dis_dis, extractor, epoch, model_dir):
     torch.save( extractor.state_dict(), '%s/EX_%d.pth' % (model_dir, epoch))
+    torch.save( dis_dis.state_dict(), '%s/DD_%d.pth' % (model_dir, epoch))
 
+def log_loss(output_csv_file, eg_loss_dict, epoch):
+
+    with open(output_csv_file, 'a') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=["epoch", "d_count", "ex_loss",
+                                                     "l1_loss", "dd_loss" ])
+        if(epoch == 1):
+            writer.writeheader()
+        writer.writerow(eg_loss_dict)  
 
 
 class Trainer(object):
@@ -72,6 +86,7 @@ class Trainer(object):
         os.makedirs(self.model_dir)
         self.image_dir = os.path.join(output_dir , 'Image')
         os.makedirs(self.image_dir)
+        self.output_csv_file = os.path.join(output_dir , 'losses_2nd.csv')
 
         # make dataloader 
         self.dataloader = get_dataloader()
@@ -124,10 +139,11 @@ class Trainer(object):
         self.RF_loss = nn.BCELoss() 
         self.L1 = nn.L1Loss()
        
-
+        max_counter = len(self.dataloader)
         for epoch in range(cfg.TRAIN.SECOND_MAX_EPOCH):
           
-
+            print("start epoch ",str(epoch))
+            count_data=0
             for data in self.dataloader:          
                 
                 # prepare data              
@@ -158,6 +174,12 @@ class Trainer(object):
                 (EX_loss+l1loss).backward()
                 self.optimizerEX.step()
 
+                if( count_data == max_counter ):
+                    print("end data number" ,count_data)
+                    log_loss(self.output_csv_file, eg_loss_dict, epoch)
+
+                count_data +=1
+
            
             # Save model&image for each epoch 
             self.extractor.eval()
@@ -167,7 +189,7 @@ class Trainer(object):
                 fake_imgs, fg_imgs, mk_imgs, fg_mk = self.netG( code_z, code_c, feat_p, code_b, 'feature')  
                 save_img_results(None, ( fake_imgs+fg_imgs+mk_imgs+fg_mk), epoch, self.image_dir )
             self.extractor.train()      
-            save_model(  self.dis_dis  ,self.extractor, 0, self.model_dir )   
+            save_model(  self.dis_dis  ,self.extractor, epoch, self.model_dir )   
             print( str(epoch)+'th epoch finished')
 
 
