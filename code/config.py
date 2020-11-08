@@ -12,7 +12,7 @@ cfg = __C
 # Dataset name: flowers, birds
 #__C.DATASET_NAME = 'birds'
 #__C.CONFIG_NAME = ''
-__C.DATA_DIR = '../data/birds'
+__C.DATA_DIR = '../data/fish'
 #__C.SAVE_DIR = ''
 __C.GPU_ID = '0'
 #__C.CUDA = True
@@ -33,11 +33,11 @@ __C.TEST = edict()
 
 # Training options
 __C.TRAIN = edict()
-__C.TRAIN.BATCH_SIZE = 12
+__C.TRAIN.BATCH_SIZE = 3
 __C.TRAIN.BG_LOSS_WT = 10
 __C.TRAIN.VIS_COUNT = 80
-__C.TRAIN.FIRST_MAX_EPOCH = 600
-__C.TRAIN.SECOND_MAX_EPOCH = 400
+__C.TRAIN.FIRST_MAX_EPOCH = 20
+__C.TRAIN.SECOND_MAX_EPOCH = 2
 __C.TRAIN.HARDNEG_MAX_ITER = 1500
 __C.TRAIN.SNAPSHOT_INTERVAL = 2000
 __C.TRAIN.SNAPSHOT_INTERVAL_HARDNEG = 500
