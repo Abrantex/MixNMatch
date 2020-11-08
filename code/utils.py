@@ -24,7 +24,7 @@ def weights_init(m):
 
 
 def make_output_dir():
-    root_path = '../output'
+    root_path = '/content/drive/My Drive/tocollab/output'
     args = sys.argv[1:]
     if len(args)==0:
         raise RuntimeError('output folder must be specified')
